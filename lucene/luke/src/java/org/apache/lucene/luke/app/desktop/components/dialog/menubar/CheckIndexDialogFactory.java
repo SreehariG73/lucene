@@ -275,13 +275,11 @@ public final class CheckIndexDialogFactory implements DialogOpener.DialogFactory
           new SwingWorker<CheckIndex.Status, Void>() {
 
             @Override
-            protected CheckIndex.Status doInBackground() {
+            protected CheckIndex.Status doInBackground() throws IOException {
               setProgress(0);
               statusLbl.setText("Running...");
               indicatorLbl.setVisible(true);
-              TextAreaPrintStream ps;
-              try {
-                ps = new TextAreaPrintStream(logArea);
+              try(TextAreaPrintStream ps = new TextAreaPrintStream(logArea, 1024);){
                 CheckIndex.Status status = toolsModel.checkIndex(ps);
                 ps.flush();
                 return status;
@@ -353,14 +351,14 @@ public final class CheckIndexDialogFactory implements DialogOpener.DialogFactory
           new SwingWorker<CheckIndex.Status, Void>() {
 
             @Override
-            protected CheckIndex.Status doInBackground() {
+            protected CheckIndex.Status doInBackground() throws IOException {
               setProgress(0);
               statusLbl.setText("Running...");
               indicatorLbl.setVisible(true);
               logArea.setText("");
               TextAreaPrintStream ps;
               try {
-                ps = new TextAreaPrintStream(logArea);
+                ps = new TextAreaPrintStream(logArea, 1024);
                 toolsModel.repairIndex(status, ps);
                 statusLbl.setText("Done");
                 ps.flush();

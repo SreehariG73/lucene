@@ -235,7 +235,7 @@ public abstract class TermsEnum implements BytesRefIterator {
 
         @Override
         public boolean seekExact(BytesRef text) throws IOException {
-          return seekCeil(text) == SeekStatus.FOUND;
+            return seekCeil(text) == SeekStatus.FOUND;
         }
 
         @Override

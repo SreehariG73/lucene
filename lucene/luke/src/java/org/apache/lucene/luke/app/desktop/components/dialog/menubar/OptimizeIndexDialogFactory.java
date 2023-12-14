@@ -210,13 +210,12 @@ public final class OptimizeIndexDialogFactory implements DialogOpener.DialogFact
           new SwingWorker<Void, Void>() {
 
             @Override
-            protected Void doInBackground() {
+            protected Void doInBackground() throws IOException {
               setProgress(0);
               statusLbl.setText("Running...");
               indicatorLbl.setVisible(true);
-              TextAreaPrintStream ps;
-              try {
-                ps = new TextAreaPrintStream(logArea);
+//              TextAreaPrintStream ps;
+              try (TextAreaPrintStream ps = new TextAreaPrintStream(logArea, 1024);) {
                 toolsModel.optimize(expungeCB.isSelected(), (int) maxSegSpnr.getValue(), ps);
                 ps.flush();
               } catch (Exception e) {
