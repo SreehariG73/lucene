@@ -19,7 +19,7 @@ package org.apache.lucene.codecs.lucene99;
 
 import static org.apache.lucene.codecs.lucene99.Lucene99FlatVectorsFormat.DIRECT_MONOTONIC_BLOCK_SHIFT;
 import static org.apache.lucene.codecs.lucene99.Lucene99ScalarQuantizedVectorsFormat.QUANTIZED_VECTOR_COMPONENT;
-import static org.apache.lucene.codecs.lucene99.Lucene99ScalarQuantizedVectorsFormat.calculateDefaultconfidenceInterval;
+import static org.apache.lucene.codecs.lucene99.Lucene99ScalarQuantizedVectorsFormat.calculateDefaultConfidenceInterval;
 import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
 import static org.apache.lucene.util.RamUsageEstimator.shallowSizeOfInstance;
 
@@ -69,14 +69,14 @@ public final class Lucene99ScalarQuantizedVectorsWriter extends FlatVectorsWrite
   private static final long SHALLOW_RAM_BYTES_USED =
       shallowSizeOfInstance(Lucene99ScalarQuantizedVectorsWriter.class);
 
-  // Used for determining when merged confidenceIntervals shifted too far from individual segment confidenceIntervals.
-  // When merging confidenceIntervals from various segments, we need to ensure that the new confidenceIntervals
-  // are not exceptionally different from an individual segments confidenceIntervals.
+  // Used for determining when merged quantiles shifted too far from individual segment quantiles.
+  // When merging quantiles from various segments, we need to ensure that the new quantiles
+  // are not exceptionally different from an individual segments quantiles.
   // This would imply that the quantization buckets would shift too much
-  // for floating point values and justify recalculating the confidenceIntervals. This helps preserve
-  // accuracy of the calculated confidenceIntervals, even in adversarial cases such as vector clustering.
+  // for floating point values and justify recalculating the quantiles. This helps preserve
+  // accuracy of the calculated quantiles, even in adversarial cases such as vector clustering.
   // This number was determined via empirical testing
-  private static final float CONFIDENCEINTERVAL_RECOMPUTE_LIMIT = 32;
+  private static final float QUANTILE_RECOMPUTE_LIMIT = 32;
   // Used for determining if a new quantization state requires a re-quantization
   // for a given segment.
   // This ensures that in expectation 4/5 of the vector would be unchanged by requantization.
@@ -144,7 +144,7 @@ public final class Lucene99ScalarQuantizedVectorsWriter extends FlatVectorsWrite
     if (fieldInfo.getVectorEncoding().equals(VectorEncoding.FLOAT32)) {
       float confidenceInterval =
           this.confidenceInterval == null
-              ? calculateDefaultconfidenceInterval(fieldInfo.getVectorDimension())
+              ? calculateDefaultConfidenceInterval(fieldInfo.getVectorDimension())
               : this.confidenceInterval;
       FieldWriter quantizedWriter =
           new FieldWriter(confidenceInterval, fieldInfo, segmentWriteState.infoStream, indexWriter);
@@ -161,7 +161,7 @@ public final class Lucene99ScalarQuantizedVectorsWriter extends FlatVectorsWrite
     // the vectors directly to the new segment.
     // No need to use temporary file as we don't have to re-open for reading
     if (fieldInfo.getVectorEncoding().equals(VectorEncoding.FLOAT32)) {
-      ScalarQuantizer mergedQuantizationState = mergeconfidenceIntervals(fieldInfo, mergeState);
+      ScalarQuantizer mergedQuantizationState = mergeQuantiles(fieldInfo, mergeState);
       MergedQuantizedVectorValues byteVectorValues =
           MergedQuantizedVectorValues.mergeQuantizedByteVectorValues(
               fieldInfo, mergeState, mergedQuantizationState);
@@ -171,7 +171,7 @@ public final class Lucene99ScalarQuantizedVectorsWriter extends FlatVectorsWrite
       long vectorDataLength = quantizedVectorData.getFilePointer() - vectorDataOffset;
       float confidenceInterval =
           this.confidenceInterval == null
-              ? calculateDefaultconfidenceInterval(fieldInfo.getVectorDimension())
+              ? calculateDefaultConfidenceInterval(fieldInfo.getVectorDimension())
               : this.confidenceInterval;
       writeMeta(
           fieldInfo,
@@ -179,8 +179,8 @@ public final class Lucene99ScalarQuantizedVectorsWriter extends FlatVectorsWrite
           vectorDataOffset,
           vectorDataLength,
           confidenceInterval,
-          mergedQuantizationState.getLowerconfidenceInterval(),
-          mergedQuantizationState.getUpperconfidenceInterval(),
+          mergedQuantizationState.getLowerQuantile(),
+          mergedQuantizationState.getUpperQuantile(),
           docsWithField);
     }
   }
@@ -192,7 +192,7 @@ public final class Lucene99ScalarQuantizedVectorsWriter extends FlatVectorsWrite
       // Simply merge the underlying delegate, which just copies the raw vector data to a new
       // segment file
       rawVectorDelegate.mergeOneField(fieldInfo, mergeState);
-      ScalarQuantizer mergedQuantizationState = mergeconfidenceIntervals(fieldInfo, mergeState);
+      ScalarQuantizer mergedQuantizationState = mergeQuantiles(fieldInfo, mergeState);
       return mergeOneFieldToIndex(
           segmentWriteState, fieldInfo, mergeState, mergedQuantizationState);
     }
@@ -252,8 +252,8 @@ public final class Lucene99ScalarQuantizedVectorsWriter extends FlatVectorsWrite
         vectorDataOffset,
         vectorDataLength,
         confidenceInterval,
-        fieldData.minconfidenceInterval,
-        fieldData.maxconfidenceInterval,
+        fieldData.minQuantile,
+        fieldData.maxQuantile,
         fieldData.docsWithField);
   }
 
@@ -262,9 +262,9 @@ public final class Lucene99ScalarQuantizedVectorsWriter extends FlatVectorsWrite
       int maxDoc,
       long vectorDataOffset,
       long vectorDataLength,
-      Float configuredQuantizationconfidenceInterval,
-      Float lowerconfidenceInterval,
-      Float upperconfidenceInterval,
+      Float confidenceInterval,
+      Float lowerQuantile,
+      Float upperQuantile,
       DocsWithFieldSet docsWithField)
       throws IOException {
     meta.writeInt(field.number);
@@ -276,14 +276,14 @@ public final class Lucene99ScalarQuantizedVectorsWriter extends FlatVectorsWrite
     int count = docsWithField.cardinality();
     meta.writeInt(count);
     if (count > 0) {
-      assert Float.isFinite(lowerconfidenceInterval) && Float.isFinite(upperconfidenceInterval);
+      assert Float.isFinite(lowerQuantile) && Float.isFinite(upperQuantile);
       meta.writeInt(
           Float.floatToIntBits(
-              configuredQuantizationconfidenceInterval != null
-                  ? configuredQuantizationconfidenceInterval
-                  : calculateDefaultconfidenceInterval(field.getVectorDimension())));
-      meta.writeInt(Float.floatToIntBits(lowerconfidenceInterval));
-      meta.writeInt(Float.floatToIntBits(upperconfidenceInterval));
+              confidenceInterval != null
+                  ? confidenceInterval
+                  : calculateDefaultConfidenceInterval(field.getVectorDimension())));
+      meta.writeInt(Float.floatToIntBits(lowerQuantile));
+      meta.writeInt(Float.floatToIntBits(upperQuantile));
     }
     // write docIDs
     OrdToDocDISIReaderConfiguration.writeStoredMeta(
@@ -345,8 +345,8 @@ public final class Lucene99ScalarQuantizedVectorsWriter extends FlatVectorsWrite
         vectorDataOffset,
         quantizedVectorLength,
         confidenceInterval,
-        fieldData.minconfidenceInterval,
-        fieldData.maxconfidenceInterval,
+        fieldData.minQuantile,
+        fieldData.maxQuantile,
         newDocsWithField);
   }
 
@@ -371,14 +371,14 @@ public final class Lucene99ScalarQuantizedVectorsWriter extends FlatVectorsWrite
     }
   }
 
-  private ScalarQuantizer mergeconfidenceIntervals(FieldInfo fieldInfo, MergeState mergeState)
+  private ScalarQuantizer mergeQuantiles(FieldInfo fieldInfo, MergeState mergeState)
       throws IOException {
     assert fieldInfo.getVectorEncoding() == VectorEncoding.FLOAT32;
     float confidenceInterval =
         this.confidenceInterval == null
-            ? calculateDefaultconfidenceInterval(fieldInfo.getVectorDimension())
+            ? calculateDefaultConfidenceInterval(fieldInfo.getVectorDimension())
             : this.confidenceInterval;
-    return mergeAndRecalculateconfidenceIntervals(mergeState, fieldInfo, confidenceInterval);
+    return mergeAndRecalculateQuantiles(mergeState, fieldInfo, confidenceInterval);
   }
 
   private ScalarQuantizedCloseableRandomVectorScorerSupplier mergeOneFieldToIndex(
@@ -410,16 +410,16 @@ public final class Lucene99ScalarQuantizedVectorsWriter extends FlatVectorsWrite
       CodecUtil.retrieveChecksum(quantizationDataInput);
       float confidenceInterval =
           this.confidenceInterval == null
-              ? calculateDefaultconfidenceInterval(fieldInfo.getVectorDimension())
+              ? calculateDefaultConfidenceInterval(fieldInfo.getVectorDimension())
               : this.confidenceInterval;
       writeMeta(
           fieldInfo,
           segmentWriteState.segmentInfo.maxDoc(),
           vectorDataOffset,
           vectorDataLength,
-              confidenceInterval,
-          mergedQuantizationState.getLowerconfidenceInterval(),
-          mergedQuantizationState.getUpperconfidenceInterval(),
+          confidenceInterval,
+          mergedQuantizationState.getLowerQuantile(),
+          mergedQuantizationState.getUpperQuantile(),
           docsWithField);
       success = true;
       final IndexInput finalQuantizationDataInput = quantizationDataInput;
@@ -445,54 +445,56 @@ public final class Lucene99ScalarQuantizedVectorsWriter extends FlatVectorsWrite
     }
   }
 
-  static ScalarQuantizer mergeconfidenceIntervals(
-      List<ScalarQuantizer> quantizationStates, List<Integer> segmentSizes, float confidenceInterval) {
+  static ScalarQuantizer mergeQuantiles(
+      List<ScalarQuantizer> quantizationStates,
+      List<Integer> segmentSizes,
+      float confidenceInterval) {
     assert quantizationStates.size() == segmentSizes.size();
     if (quantizationStates.isEmpty()) {
       return null;
     }
-    float lowerconfidenceInterval = 0f;
-    float upperconfidenceInterval = 0f;
+    float lowerQuantile = 0f;
+    float upperQuantile = 0f;
     int totalCount = 0;
     for (int i = 0; i < quantizationStates.size(); i++) {
       if (quantizationStates.get(i) == null) {
         return null;
       }
-      lowerconfidenceInterval += quantizationStates.get(i).getLowerconfidenceInterval() * segmentSizes.get(i);
-      upperconfidenceInterval += quantizationStates.get(i).getUpperconfidenceInterval() * segmentSizes.get(i);
+      lowerQuantile += quantizationStates.get(i).getLowerQuantile() * segmentSizes.get(i);
+      upperQuantile += quantizationStates.get(i).getUpperQuantile() * segmentSizes.get(i);
       totalCount += segmentSizes.get(i);
     }
-    lowerconfidenceInterval /= totalCount;
-    upperconfidenceInterval /= totalCount;
-    return new ScalarQuantizer(lowerconfidenceInterval, upperconfidenceInterval, confidenceInterval);
+    lowerQuantile /= totalCount;
+    upperQuantile /= totalCount;
+    return new ScalarQuantizer(lowerQuantile, upperQuantile, confidenceInterval);
   }
 
   /**
-   * Returns true if the confidenceIntervals of the merged state are too far from the confidenceIntervals of the
+   * Returns true if the quantiles of the merged state are too far from the quantiles of the
    * individual states.
    *
    * @param mergedQuantizationState The merged quantization state
    * @param quantizationStates The quantization states of the individual segments
-   * @return true if the confidenceIntervals should be recomputed
+   * @return true if the quantiles should be recomputed
    */
-  static boolean shouldRecomputeconfidenceIntervals(
+  static boolean shouldRecomputeQuantiles(
       ScalarQuantizer mergedQuantizationState, List<ScalarQuantizer> quantizationStates) {
-    // calculate the limit for the confidenceIntervals to be considered too far apart
+    // calculate the limit for the quantiles to be considered too far apart
     // We utilize upper & lower here to determine if the new upper and merged upper would
     // drastically
     // change the quantization buckets for floats
     // This is a fairly conservative check.
     float limit =
-        (mergedQuantizationState.getUpperconfidenceInterval() - mergedQuantizationState.getLowerconfidenceInterval())
-            / CONFIDENCEINTERVAL_RECOMPUTE_LIMIT;
+        (mergedQuantizationState.getUpperQuantile() - mergedQuantizationState.getLowerQuantile())
+            / QUANTILE_RECOMPUTE_LIMIT;
     for (ScalarQuantizer quantizationState : quantizationStates) {
       if (Math.abs(
-              quantizationState.getUpperconfidenceInterval() - mergedQuantizationState.getUpperconfidenceInterval())
+              quantizationState.getUpperQuantile() - mergedQuantizationState.getUpperQuantile())
           > limit) {
         return true;
       }
       if (Math.abs(
-              quantizationState.getLowerconfidenceInterval() - mergedQuantizationState.getLowerconfidenceInterval())
+              quantizationState.getLowerQuantile() - mergedQuantizationState.getLowerQuantile())
           > limit) {
         return true;
       }
@@ -520,7 +522,7 @@ public final class Lucene99ScalarQuantizedVectorsWriter extends FlatVectorsWrite
     return null;
   }
 
-  static ScalarQuantizer mergeAndRecalculateconfidenceIntervals(
+  static ScalarQuantizer mergeAndRecalculateQuantiles(
       MergeState mergeState, FieldInfo fieldInfo, float confidenceInterval) throws IOException {
     List<ScalarQuantizer> quantizationStates = new ArrayList<>(mergeState.liveDocs.length);
     List<Integer> segmentSizes = new ArrayList<>(mergeState.liveDocs.length);
@@ -536,38 +538,39 @@ public final class Lucene99ScalarQuantizedVectorsWriter extends FlatVectorsWrite
         segmentSizes.add(fvv.size());
       }
     }
-    ScalarQuantizer mergedconfidenceIntervals = mergeconfidenceIntervals(quantizationStates, segmentSizes, confidenceInterval);
-    // Segments no providing quantization state indicates that their confidenceIntervals were never
+    ScalarQuantizer mergedQuantiles =
+        mergeQuantiles(quantizationStates, segmentSizes, confidenceInterval);
+    // Segments no providing quantization state indicates that their quantiles were never
     // calculated.
     // To be safe, we should always recalculate given a sample set over all the float vectors in the
     // merged
     // segment view
-    if (mergedconfidenceIntervals == null || shouldRecomputeconfidenceIntervals(mergedconfidenceIntervals, quantizationStates)) {
+    if (mergedQuantiles == null || shouldRecomputeQuantiles(mergedQuantiles, quantizationStates)) {
       FloatVectorValues vectorValues =
           KnnVectorsWriter.MergedVectorValues.mergeFloatVectorValues(fieldInfo, mergeState);
-      mergedconfidenceIntervals = ScalarQuantizer.fromVectors(vectorValues, confidenceInterval);
+      mergedQuantiles = ScalarQuantizer.fromVectors(vectorValues, confidenceInterval);
     }
-    return mergedconfidenceIntervals;
+    return mergedQuantiles;
   }
 
   /**
-   * Returns true if the confidenceIntervals of the new quantization state are too far from the confidenceIntervals of
+   * Returns true if the quantiles of the new quantization state are too far from the quantiles of
    * the existing quantization state. This would imply that floating point values would slightly
    * shift quantization buckets.
    *
-   * @param existingconfidenceIntervals The existing confidenceIntervals for a segment
-   * @param newconfidenceIntervals The new confidenceIntervals for a segment, could be merged, or fully re-calculated
+   * @param existingQuantiles The existing quantiles for a segment
+   * @param newQuantiles The new quantiles for a segment, could be merged, or fully re-calculated
    * @return true if the floating point values should be requantized
    */
-  static boolean shouldRequantize(ScalarQuantizer existingconfidenceIntervals, ScalarQuantizer newconfidenceIntervals) {
+  static boolean shouldRequantize(ScalarQuantizer existingQuantiles, ScalarQuantizer newQuantiles) {
     float tol =
         REQUANTIZATION_LIMIT
-            * (newconfidenceIntervals.getUpperconfidenceInterval() - newconfidenceIntervals.getLowerconfidenceInterval())
+            * (newQuantiles.getUpperQuantile() - newQuantiles.getLowerQuantile())
             / 128f;
-    if (Math.abs(existingconfidenceIntervals.getUpperconfidenceInterval() - newconfidenceIntervals.getUpperconfidenceInterval()) > tol) {
+    if (Math.abs(existingQuantiles.getUpperQuantile() - newQuantiles.getUpperQuantile()) > tol) {
       return true;
     }
-    return Math.abs(existingconfidenceIntervals.getLowerconfidenceInterval() - newconfidenceIntervals.getLowerconfidenceInterval()) > tol;
+    return Math.abs(existingQuantiles.getLowerQuantile() - newQuantiles.getLowerQuantile()) > tol;
   }
 
   /**
@@ -602,8 +605,8 @@ public final class Lucene99ScalarQuantizedVectorsWriter extends FlatVectorsWrite
     private final float confidenceInterval;
     private final InfoStream infoStream;
     private final boolean normalize;
-    private float minconfidenceInterval = Float.POSITIVE_INFINITY;
-    private float maxconfidenceInterval = Float.NEGATIVE_INFINITY;
+    private float minQuantile = Float.POSITIVE_INFINITY;
+    private float maxQuantile = Float.NEGATIVE_INFINITY;
     private boolean finished;
     private final DocsWithFieldSet docsWithField;
 
@@ -636,25 +639,25 @@ public final class Lucene99ScalarQuantizedVectorsWriter extends FlatVectorsWrite
                   floatVectors,
                   fieldInfo.getVectorSimilarityFunction() == VectorSimilarityFunction.COSINE),
               confidenceInterval);
-      minconfidenceInterval = quantizer.getLowerconfidenceInterval();
-      maxconfidenceInterval = quantizer.getUpperconfidenceInterval();
+      minQuantile = quantizer.getLowerQuantile();
+      maxQuantile = quantizer.getUpperQuantile();
       if (infoStream.isEnabled(QUANTIZED_VECTOR_COMPONENT)) {
         infoStream.message(
             QUANTIZED_VECTOR_COMPONENT,
             "quantized field="
                 + " confidenceInterval="
                 + confidenceInterval
-                + " minconfidenceInterval="
-                + minconfidenceInterval
-                + " maxconfidenceInterval="
-                + maxconfidenceInterval);
+                + " minQuantile="
+                + minQuantile
+                + " maxQuantile="
+                + maxQuantile);
       }
       finished = true;
     }
 
     ScalarQuantizer createQuantizer() {
       assert finished;
-      return new ScalarQuantizer(minconfidenceInterval, maxconfidenceInterval, confidenceInterval);
+      return new ScalarQuantizer(minQuantile, maxQuantile, confidenceInterval);
     }
 
     @Override
